@@ -1,0 +1,20 @@
+health_monitor/
+├── client/
+│   ├── main.py              # Windows клиент
+│   ├── ui/                  # PyQt UI файлы
+│   ├── models/              # ONNX модели
+│   ├── ml/                  # Fine-tuning код
+│   ├── ble/                 # BLE клиент/сервер
+│   └── database/            # SQLite схемы
+├── server/
+│   ├── main.py               # FastAPI приложение (с SQLAlchemy)
+│   ├── models.py             # SQLAlchemy модели
+│   ├── migrations/           # Папка для Alembic
+│   │   ├── env.py            # Alembic конфиг
+│   │   ├── versions/         # Миграции
+│   │   │   └── 001_initial_schema.py  # Первая миграция
+│   │   └── init.sql          # Инициализация
+│   └── requirements.txt      # Зависимости сервера
+├── docker-compose.yml
+├── requirements.txt
+└── .pycharm/
