@@ -1,0 +1,12 @@
+health_monitor/
+├── server/
+│   ├── main.py               # FastAPI приложение (с SQLAlchemy)
+│   ├── models.py             # SQLAlchemy модели
+│   ├── migrations/           # Папка для Alembic
+│   │   ├── env.py            # Alembic конфиг
+│   │   ├── versions/         # Миграции
+│   │   │   └── 001_initial_schema.py  # Первая миграция
+│   │   └── init.sql          # Инициализация
+│   └── requirements.txt      # Зависимости сервера
+├── docker-compose.yml        # Из предыдущего
+└── .env                      # Для переменных

@@ -1,0 +1,51 @@
+# Core ML & Inference (обновлено до последних stable)
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.5.0+cpu
+torchaudio==2.5.0+cpu
+torchvision==0.20.0+cpu
+onnxruntime==1.19.0
+peft==0.17.0
+transformers==4.45.0
+accelerate==1.2.1
+
+# GUI
+PyQt6==6.7.1
+PyQt6-sip==13.8.0
+PyQt6-WebEngine==6.7.0
+# BLE Communication
+bleak==1.1.1
+pywin32==306
+
+# Database
+sqlalchemy==2.0.36
+alembic==1.13.3
+psycopg2-binary==2.9.10
+aiosqlite==0.20.0
+asyncpg==0.29.0
+
+
+# Server
+fastapi==0.119.0
+uvicorn[standard]==0.32.0
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.9
+passlib[bcrypt]==1.7.4
+
+# Utils
+pandas==2.2.3
+numpy==2.1.2
+apscheduler==3.10.4
+PyInstaller==6.13.0
+requests==2.32.3
+
+# Testing & Dev
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-qt==4.5.0
+black==24.10.0
+flake8==7.1.1
+
+# Windows specific
+pyinstaller-hooks-contrib==2025.4
+plyer==2.1.0
