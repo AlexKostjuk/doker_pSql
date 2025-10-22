@@ -1,4 +1,9 @@
-from sqlalchemy import Column, Integer, ForeignKey, String, Float, DateTime, Boolean, JSON, BigInteger, CheckConstraint
+# server/models.py
+from sqlalchemy import (
+    Column, Integer, ForeignKey, String, Float, DateTime, Boolean,
+    JSON, BigInteger, CheckConstraint, PrimaryKeyConstraint, Index, Text,
+    ForeignKeyConstraint  # ← ДОБАВЛЕНО
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -47,9 +52,9 @@ class Device(Base):
 
 
 class SensorVector(Base):
-    __tablename__ = "sensor_vectors"
+    __tablename__ = "a_sensor_vectors"
 
-    id = Column(BigInteger, primary_key=True)
+    id = Column(BigInteger, primary_key=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     device_id = Column(Integer, ForeignKey("devices.id"), nullable=False, index=True)
     timestamp = Column(DateTime(timezone=True), nullable=False, index=True)
@@ -75,15 +80,15 @@ class SensorVector(Base):
     breathing_rate = Column(Integer)
 
     # Context
-    activity_type = Column(String(50))
-    location_type = Column(String(20))
+    activity_type = Column(Text)
+    location_type = Column(Text)
     battery_level = Column(Integer)
 
     # ML Results
     stress_level = Column(Float)
     energy_level = Column(Float)
     focus_level = Column(Float)
-    model_version = Column(String(20), nullable=False)
+    model_version = Column(Text, nullable=False)
     confidence_score = Column(Float)
 
     # Flexible storage
@@ -95,6 +100,12 @@ class SensorVector(Base):
     # Relationships
     user = relationship("User", back_populates="vectors")
     device = relationship("Device", back_populates="vectors")
+
+    # ← Composite PK + Index
+    __table_args__ = (
+        PrimaryKeyConstraint('id', 'timestamp', 'user_id'),
+        Index('ix_sensor_vectors_user_timestamp', 'user_id', 'timestamp'),
+    )
 
 
 class MLModel(Base):
@@ -109,7 +120,7 @@ class MLModel(Base):
     checksum = Column(String(64))
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    metadata = Column(JSONB)
+    model_metadata = Column(JSONB)
 
 
 class LoraUpdate(Base):
@@ -123,21 +134,32 @@ class LoraUpdate(Base):
     update_timestamp = Column(DateTime(timezone=True), server_default=func.now())
     training_samples = Column(Integer, nullable=False)
     validation_accuracy = Column(Float)
-    metadata = Column(JSONB)
-
+    update_metadata = Column(JSONB)
 
 class UserLabel(Base):
     __tablename__ = "user_labels"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    vector_id = Column(BigInteger, ForeignKey("sensor_vectors.id"))
+
+    # ← ДОБАВЬ: user_id в FK
+    vector_id = Column(BigInteger, nullable=True)
+    vector_timestamp = Column(DateTime(timezone=True), nullable=True)
+    vector_user_id = Column(Integer, nullable=True)  # ← НОВОЕ ПОЛЕ
+
     label_type = Column(String(50), nullable=False)
     label_value = Column(String(50), nullable=False)
     confidence = Column(Float)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     note = Column(String)
 
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['vector_id', 'vector_timestamp', 'vector_user_id'],
+            ['a_sensor_vectors.id', 'a_sensor_vectors.timestamp', 'a_sensor_vectors.user_id'],
+            ondelete="CASCADE"
+        ),
+    )
 
 class TrainingSession(Base):
     __tablename__ = "training_sessions"
@@ -155,5 +177,5 @@ class TrainingSession(Base):
     status = Column(String(20), default="completed")
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
-    metadata = Column(JSONB)
+    training_metadata = Column(JSONB)
     error_message = Column(String)

@@ -1,21 +1,24 @@
-FROM python:3.11-slim
+# server/Dockerfile
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Системные зависимости
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
-COPY ../requirements.txt .
+# Копируем requirements.txt ИЗ server/
+COPY requirements.txt .
+
+# Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Копируем весь код
 COPY . .
 
-# Create non-root user
+# Пользователь
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
