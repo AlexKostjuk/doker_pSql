@@ -1,196 +1,142 @@
+# client/main.py
 import sys
-import asyncio
 from datetime import datetime
-import sqlite3
-import requests
-import onnxruntime as ort
-from bleak import BleakClient
-from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget
-from PyQt6.QtCore import QTimer
-from plyer import notification
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QLabel, QPushButton,
+    QVBoxLayout, QWidget, QTextEdit, QMessageBox
+)
+from PyQt6.QtCore import Qt
+from .db import init_db, get_db
+from .local_models import User, Device
+from .worker import DatabaseWorker
+from .cleanup import cleanup_old_data
+from .sync import sync_to_cloud
 
-
-class HealthMonitorApp(QMainWindow):
-    """Main application window for Health Monitor using PyQt6"""
-
+class HealthClient(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Health Monitor")
-        self.setGeometry(100, 100, 400, 300)
+        self.setWindowTitle("Headset Health Monitor (FREE)")
+        self.setGeometry(100, 100, 500, 600)
 
-        # Initialize components
-        self.setup_local_ml()
-        self.setup_local_db()
-        self.api_client = APIClient("http://localhost:8000")
-        self.is_premium = False
         self.user_id = None
-        self.ble_client = None
+        self.device_id = None
+        self.worker = None
 
-        # UI setup
-        self.setup_ui()
-
-        # Timer for periodic sensor reading
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.read_sensors)
-        self.timer.start(2000)  # Every 2 seconds
-
-    def setup_local_ml(self):
-        """Initialize ONNX model for local inference"""
-        try:
-            self.ml_session = ort.InferenceSession("models/stress_model.onnx")
-        except Exception as e:
-            self.show_notification("ML Error", f"Failed to load ONNX model: {e}")
-            raise
-
-    def setup_local_db(self):
-        """Initialize local SQLite database"""
-        self.conn = sqlite3.connect("health_data.db")
-        self.cursor = self.conn.cursor()
-        self.cursor.execute("""
-                            CREATE TABLE IF NOT EXISTS local_vectors
-                            (
-                                id
-                                INTEGER
-                                PRIMARY
-                                KEY
-                                AUTOINCREMENT,
-                                timestamp
-                                TEXT
-                                NOT
-                                NULL,
-                                heart_rate
-                                INTEGER,
-                                stress_level
-                                REAL,
-                                model_version
-                                TEXT
-                                DEFAULT
-                                'v1.0'
-                            )
-                            """)
-        self.conn.commit()
-
-    def setup_ui(self):
-        """Set up PyQt6 UI"""
+        # GUI
+        central = QWidget()
         layout = QVBoxLayout()
-        self.status_label = QLabel("Status: Free User")
-        self.sync_button = QPushButton("Sync Data (Premium)")
-        self.sync_button.clicked.connect(self.sync_data)
-        self.sync_button.setEnabled(False)  # Disabled until premium status confirmed
-        self.auth_button = QPushButton("Login")
-        self.auth_button.clicked.connect(self.authenticate)
+
+        self.status_label = QLabel("Инициализация...")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setStyleSheet("font-family: Consolas; font-size: 10px;")
+
+        self.sync_btn = QPushButton("Синхронизировать (PREMIUM)")
+        self.sync_btn.clicked.connect(self.start_sync)
+        self.sync_btn.setEnabled(False)
 
         layout.addWidget(self.status_label)
-        layout.addWidget(self.sync_button)
-        layout.addWidget(self.auth_button)
+        layout.addWidget(self.log_box)
+        layout.addWidget(self.sync_btn)
+        central.setLayout(layout)
+        self.setCentralWidget(central)
 
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        self.log("Запуск клиента...")
 
-    async def connect_ble(self):
-        """Connect to BLE device (example)"""
+        # Запуск инициализации
+        self.ensure_user_and_device()
+
+    def ensure_user_and_device(self):
         try:
-            async with BleakClient("00:11:22:33:44:55") as client:  # Replace with actual BLE address
-                self.ble_client = client
-                # Example: Read heart rate characteristic (replace UUID)
-                heart_rate = await client.read_gatt_char("00002a37-0000-1000-8000-00805f9b34fb")
-                return int.from_bytes(heart_rate, "little")
+            init_db()
+            self.log("БД инициализирована")
+
+            db_gen = get_db()
+            db = next(db_gen)
+
+            # Пользователь
+            user = db.query(User).first()
+            if not user:
+                user = User(username="local_user", email="local@example.com", hashed_password="***")
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+                self.log("Создан локальный пользователь")
+
+            self.user_id = user.id
+
+            # Устройство
+            device = db.query(Device).filter(Device.user_id == self.user_id).first()
+            if not device:
+                device = Device(
+                    user_id=self.user_id,
+                    device_name="Headset-Local",
+                    device_type="headset",
+                    device_id="LOCAL-001"
+                )
+                db.add(device)
+                db.commit()
+                self.log("Создано устройство")
+
+            self.device_id = device.id
+            db.close()
+
+            # Запуск воркера
+            self.start_worker()
+
+            # Включаем кнопку
+            self.sync_btn.setEnabled(True)
+            self.status_label.setText("Сбор данных...")
+            self.log("Готов к работе")
+
         except Exception as e:
-            self.show_notification("BLE Error", f"Failed to connect: {e}")
-            return None
+            self.log(f"[ОШИБКА] {e}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось запуститься:\n{e}")
 
-    def read_sensors(self):
-        """Read sensor data and predict stress level"""
-        # Run BLE connection in async context
-        loop = asyncio.get_event_loop()
-        heart_rate = loop.run_until_complete(self.connect_ble()) or 75  # Fallback value
-        sensor_data = {"heart_rate": heart_rate}
+    def start_worker(self):
+        self.worker = DatabaseWorker(self.user_id, self.device_id)
+        self.worker.data_collected.connect(self.update_status)
+        self.worker.log_message.connect(self.log)
+        self.worker.start()
 
-        stress_level = self.predict_stress(sensor_data)
-        self.cursor.execute(
-            "INSERT INTO local_vectors (timestamp, heart_rate, stress_level) VALUES (?, ?, ?)",
-            (datetime.utcnow().isoformat(), sensor_data["heart_rate"], stress_level)
-        )
-        self.conn.commit()
-        self.status_label.setText(f"Stress: {stress_level:.2f}")
+        # Очистка раз в сутки
+        from PyQt6.QtCore import QTimer
+        cleanup_timer = QTimer(self)
+        cleanup_timer.timeout.connect(cleanup_old_data)
+        cleanup_timer.start(24 * 60 * 60 * 1000)
 
-    def predict_stress(self, sensor_data):
-        """Perform local inference with ONNX model"""
+    def update_status(self, data):
+        self.status_label.setText(f"HR: {data['hr']} | Stress: {data['stress']:.2f}")
+
+    def start_sync(self):
+        self.sync_btn.setEnabled(False)
+        self.log("Синхронизация...")
+        jwt = "YOUR_JWT_HERE"
         try:
-            inputs = {self.ml_session.get_inputs()[0].name: [[sensor_data["heart_rate"]]]}
-            result = self.ml_session.run(None, inputs)[0][0][0]
-            return result
+            sync_to_cloud(jwt)
+            self.log("Синхронизация завершена")
         except Exception as e:
-            self.show_notification("Inference Error", f"Prediction failed: {e}")
-            return 0.0
+            self.log(f"[SYNC ERROR] {e}")
+        finally:
+            self.sync_btn.setEnabled(True)
 
-    def authenticate(self):
-        """Authenticate user with FastAPI server (placeholder)"""
-        try:
-            # Example: POST /auth/login with dummy credentials
-            response = self.api_client.login({"username": "testuser", "password": "testpass"})
-            if response.status_code == 200:
-                data = response.json()
-                self.user_id = data.get("user_id")
-                self.is_premium = data.get("user_type") == "premium"
-                self.sync_button.setEnabled(self.is_premium)
-                self.status_label.setText(f"Logged in as {'Premium' if self.is_premium else 'Free'} User")
-                self.show_notification("Login Success", "Authentication successful")
-            else:
-                self.show_notification("Login Failed", "Invalid credentials")
-        except Exception as e:
-            self.show_notification("Login Error", f"Authentication failed: {e}")
-
-    def sync_data(self):
-        """Sync local data with server (Premium only)"""
-        if not self.is_premium:
-            self.show_notification("Sync Error", "Sync requires Premium account")
-            self.status_label.setText("Sync requires Premium")
-            return
-        try:
-            vectors = self.cursor.execute("SELECT * FROM local_vectors").fetchall()
-            vector_data = [
-                {"timestamp": v[1], "heart_rate": v[2], "stress_level": v[3], "model_version": v[4]}
-                for v in vectors
-            ]
-            response = self.api_client.sync_vectors(self.user_id, vector_data)
-            if response.status_code == 200:
-                self.cursor.execute("DELETE FROM local_vectors")
-                self.conn.commit()
-                self.status_label.setText("Sync successful")
-                self.show_notification("Sync Success", "Data synced with server")
-            else:
-                self.show_notification("Sync Error", f"Sync failed: {response.text}")
-        except Exception as e:
-            self.show_notification("Sync Error", f"Sync failed: {e}")
-
-    def show_notification(self, title, message):
-        """Show desktop notification using plyer"""
-        notification.notify(title=title, message=message, timeout=5)
+    def log(self, msg: str):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log_box.append(f"[{ts}] {msg}")
+        self.log_box.ensureCursorVisible()
 
     def closeEvent(self, event):
-        """Clean up on window close"""
-        self.conn.close()
+        if self.worker:
+            self.worker.stop()
+            self.worker.wait()
         event.accept()
-
-
-class APIClient:
-    """HTTP client for FastAPI server"""
-
-    def __init__(self, base_url):
-        self.base_url = base_url
-        self.session = requests.Session()
-
-    def login(self, credentials):
-        return self.session.post(f"{self.base_url}/auth/login", json=credentials)
-
-    def sync_vectors(self, user_id, vectors):
-        return self.session.post(f"{self.base_url}/sync/{user_id}/vectors", json=vectors)
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = HealthMonitorApp()
+    window = HealthClient()
     window.show()
     sys.exit(app.exec())

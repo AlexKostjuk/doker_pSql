@@ -1,0 +1,28 @@
+    docker-compose down -v
+    docker-compose build --no-cache api
+    docker-compose up -d
+
+,,, из докера в models.py временно удалить user_labels,,,
+
+    ,,,migrations,,,
+    docker exec -it doker_psql-api-1 bash
+        rm -rf migrations/versions/*
+        alembic revision --autogenerate -m "create core tables without user_labels"
+        alembic upgrade head
+
+    ,,,пороверка таблиц,,,
+    docker exec -it health_db psql -U health_user -d health_monitor -c "\dt"
+
+    ,,,hypertable,,,
+    docker exec -it health_db psql -U health_user -d health_monitor
+        SELECT create_hypertable('a_sensor_vectors', 'timestamp',
+            partitioning_column => 'user_id',
+            number_partitions => 2
+        );
+
+,,,вернуть UserLabel в models.py,,,
+
+    ,,,migrations,,,
+    docker exec -it doker_psql-api-1 bash
+        alembic revision --autogenerate -m "add user_labels with fk"
+        alembic upgrade head
